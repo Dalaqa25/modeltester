@@ -1,14 +1,18 @@
 from fastapi import FastAPI, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from pydantic import BaseModel
 import zipfile
 import tempfile
 import os
+import json
 from onnx_runner import run_onnx_model
 
 class UploadRequest(BaseModel):
-    text: str
+    status: str
+    reason: str
+    framework_used: str
+    task_detection: str
 
 app = FastAPI()
 
@@ -30,19 +34,20 @@ def read_root():
     return {"Hello": "World"}
 
 @app.post("/upload/")
-async def upload_file(file: UploadFile = File(...), request: UploadRequest = None, text: str = Form(None)):
+async def upload_file(file: UploadFile = File(...), text: str = Form(...)):
     if file.content_type != "application/zip":
         return JSONResponse(status_code=400, content={"message": "File must be a zip file."})
 
-    text_value = request.text if request else text
-    if not text_value:
-        return JSONResponse(status_code=400, content={"message": "Text data is required."})
+    try:
+        data = json.loads(text)
+        request = UploadRequest(**data)
+    except json.JSONDecodeError:
+        # Backward compatibility: assume text is the framework_used string
+        request = UploadRequest(status="UNKNOWN", reason="", framework_used=text, task_detection="")
 
     # Debugging logs
-    source = "JSON" if request else "Form"
-    print(f"Received data via: {source}")
     print(f"Received file: {file.filename}, content_type: {file.content_type}")
-    print(f"Received text: {text_value}")
+    print(f"Received JSON: {request.dict()}")
 
     try:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -68,16 +73,17 @@ async def upload_file(file: UploadFile = File(...), request: UploadRequest = Non
             if warnings:
                 return JSONResponse(status_code=422, content={"warnings": warnings})
 
-            response_content = {
-                "message": "ONNX model loaded successfully",
-                "filename": file.filename,
-                "text": text_value,
-                "extracted_files": extracted_files,
-                "model_inputs": input_names,
-                "model_outputs": output_names
-            }
+            # Create processed zip
+            processed_zip_path = os.path.join(temp_dir, 'processed_model.zip')
+            with zipfile.ZipFile(processed_zip_path, 'w') as zip_ref:
+                for root, dirs, files in os.walk(temp_dir):
+                    for f in files:
+                        if f != file.filename and f != 'processed_model.zip':
+                            full_path = os.path.join(root, f)
+                            arcname = os.path.relpath(full_path, temp_dir)
+                            zip_ref.write(full_path, arcname)
 
-            return JSONResponse(status_code=200, content=response_content)
+            return FileResponse(processed_zip_path, media_type='application/zip', filename='processed_model.zip')
 
     except Exception as e:
         print(f"Error: {e}")
