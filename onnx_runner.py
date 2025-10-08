@@ -3,6 +3,7 @@ import onnxruntime
 import io
 import sys
 import onnx
+import numpy as np
 
 def run_onnx_model(temp_dir):
     onnx_model_path = None
@@ -42,5 +43,37 @@ def run_onnx_model(temp_dir):
     print(f"loading model from: {onnx_model_path}")
     input_names = [input.name for input in session.get_inputs()]
     output_names = [output.name for output in session.get_outputs()]
+
+    # Test inference with dummy data
+    try:
+        inputs_dict = {}
+        for input_info in session.get_inputs():
+            shape = input_info.shape
+            if shape and len(shape) > 0 and shape[0] == -1:
+                # Replace dynamic batch with 1
+                shape = (1,) + tuple(shape[1:])
+            elif not shape or any(s == -1 for s in shape):
+                # Skip if shape is unknown or has other dynamic dims
+                print(f"Skipping inference test due to dynamic shape in input {input_info.name}")
+                break
+            else:
+                shape = tuple(shape)
+            # Map ONNX types to numpy dtypes
+            type_map = {
+                'tensor(float)': np.float32,
+                'tensor(double)': np.float64,
+                'tensor(int32)': np.int32,
+                'tensor(int64)': np.int64,
+                # Add more if needed
+            }
+            dtype = type_map.get(str(input_info.type), np.float32)
+            dummy_input = np.zeros(shape, dtype=dtype)
+            inputs_dict[input_info.name] = dummy_input
+        else:
+            # Only run if all inputs were created
+            session.run(output_names, inputs_dict)
+            print("Inference test successful: Model runs with dummy data")
+    except Exception as e:
+        print(f"Inference test failed: {e}")
 
     return input_names, output_names, warnings, None, opset_warning

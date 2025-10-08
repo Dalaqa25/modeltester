@@ -1,15 +1,20 @@
 from fastapi import FastAPI, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 import zipfile
 import tempfile
 import os
 from onnx_runner import run_onnx_model
 
+class UploadRequest(BaseModel):
+    text: str
+
 app = FastAPI()
 
 origins = [
     "http://localhost:3000",
+    "http://127.0.0.1:8000",
 ]
 
 app.add_middleware(
@@ -25,9 +30,19 @@ def read_root():
     return {"Hello": "World"}
 
 @app.post("/upload/")
-async def upload_file(file: UploadFile = File(...), text: str = Form(...)):
+async def upload_file(file: UploadFile = File(...), request: UploadRequest = None, text: str = Form(None)):
     if file.content_type != "application/zip":
         return JSONResponse(status_code=400, content={"message": "File must be a zip file."})
+
+    text_value = request.text if request else text
+    if not text_value:
+        return JSONResponse(status_code=400, content={"message": "Text data is required."})
+
+    # Debugging logs
+    source = "JSON" if request else "Form"
+    print(f"Received data via: {source}")
+    print(f"Received file: {file.filename}, content_type: {file.content_type}")
+    print(f"Received text: {text_value}")
 
     try:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -56,7 +71,7 @@ async def upload_file(file: UploadFile = File(...), text: str = Form(...)):
             response_content = {
                 "message": "ONNX model loaded successfully",
                 "filename": file.filename,
-                "text": text,
+                "text": text_value,
                 "extracted_files": extracted_files,
                 "model_inputs": input_names,
                 "model_outputs": output_names
