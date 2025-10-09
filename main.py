@@ -6,6 +6,7 @@ import zipfile
 import tempfile
 import os
 import json
+import requests
 from onnx_runner import run_onnx_model
 
 class UploadRequest(BaseModel):
@@ -83,7 +84,14 @@ async def upload_file(file: UploadFile = File(...), text: str = Form(...)):
                             arcname = os.path.relpath(full_path, temp_dir)
                             zip_ref.write(full_path, arcname)
 
-            return FileResponse(processed_zip_path, media_type='application/zip', filename='processed_model.zip')
+            # Send to Next.js app
+            with open(processed_zip_path, 'rb') as f:
+                nextjs_response = requests.post('http://localhost:3000/api/models', files={'file': f}, data={'text': json.dumps(request.dict())})
+
+            if nextjs_response.status_code == 200:
+                return JSONResponse(status_code=200, content={"message": "Model processed and sent to Next.js successfully", "nextjs_response": nextjs_response.json() if nextjs_response.headers.get('content-type') == 'application/json' else nextjs_response.text})
+            else:
+                return JSONResponse(status_code=500, content={"message": "Model processed but failed to send to Next.js", "nextjs_status": nextjs_response.status_code, "nextjs_response": nextjs_response.text})
 
     except Exception as e:
         print(f"Error: {e}")
